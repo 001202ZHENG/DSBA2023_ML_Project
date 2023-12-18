@@ -2,7 +2,9 @@
 title: "Preprocessing_and_FOCI_ver2"
 author: "Yingxuan WU"
 date: "2023-11-30"
-output: html_document
+output:
+  pdf_document: default
+  html_document: default
 ---
 
 ```{r setup, include=FALSE}
