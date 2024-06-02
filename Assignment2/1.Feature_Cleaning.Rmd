@@ -1,0 +1,230 @@
+---
+title: "Preprocessing_and_FOCI_ver2"
+author: "Yingxuan WU"
+date: "2023-11-30"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# load the csv file
+
+```{r}
+setwd("/Users/yingxuanwu/Downloads/fml-kaggle-challenge-credit-score-classification")
+
+library(readr)
+train_set <- read_csv("train_set.csv", 
+    col_types = cols(Month = col_skip(), 
+        Name = col_skip(), SSN = col_skip()))
+#at the loading stage, we just deleted the features that are not useful.
+
+
+```
+
+#Utility functions
+
+```{r}
+library(tidyr)
+library(dplyr)
+```
+
+# first we define several utility functions for encodings.
+
+## Loan types
+
+```{r}
+loan_type_process <- function(data){
+      # 1. Split the Type_of_Loan column into a list of types
+      loan_types_list <- strsplit(data$Type_of_Loan, ",")
+      
+      # 2. Find all unique loan types across all rows
+      unique_loan_types <- unique(unlist(loan_types_list))
+      
+      # 3. Create a one-hot encoded matrix
+      one_hot_matrix <- sapply(unique_loan_types, function(x) FUN = as.integer(sapply(loan_types_list, function(y) x %in% y)))
+      
+      # 4. Convert the matrix to a dataframe
+      one_hot_df <- as.data.frame(one_hot_matrix)
+      
+     # 5. Name the columns (replacing spaces with underscores)
+      names(one_hot_df) <- gsub(" ", "_", unique_loan_types)
+
+      
+      # 6. Bind with the original dataframe
+      data <- cbind(data, one_hot_df)
+      
+      # 7. Rremove the original Type_of_Loan column
+      data$Type_of_Loan <- NULL
+      
+      return (data)
+}
+train_final <- loan_type_process(train_set)
+
+```
+
+## Payment_Behaviour
+
+```{r}
+payment_preprocess <- function(data){
+  data <- transform(data, 
+                  Spent = gsub("^(\\w+)_spent_\\w+_value_payments$", "\\1", Payment_Behaviour),
+                  Value_Payments = gsub("^\\w+_spent_(\\w+)_value_payments$", "\\1", Payment_Behaviour))
+
+  data$Spent <- factor(data$Spent, levels = c("Low", "High"))
+  data$EncodedSpent <- as.numeric(data$Spent)
+  
+  data$Value_Payments <- factor(data$Value_Payments, levels = c("Small", "Medium","Large"))
+  data$EncodedValue_Payments <- as.numeric(data$Value_Payments)
+  
+  data$Payment_Behaviour <- NULL
+  data$Value_Payments <- NULL
+  data$Spent <- NULL
+  return(data)
+}
+train_final <- payment_preprocess(train_final)
+```
+
+## General Numerical Encoding function
+
+```{r}
+encode_numerical <- function(data, column_name, types_list){
+  if(!column_name %in% names(data)) {
+    stop("Column not found in the data frame")
+  }
+  data[[column_name]] <- factor(data[[column_name]], levels = types_list)
+  encoded_column_name <- paste0(column_name, "_Encoded")
+  data[[encoded_column_name]] <- as.numeric(data[[column_name]])
+  data[[column_name]] <- NULL
+
+  return(data)
+}
+
+
+#train_final <- encode_numerical(train_final, "Credit_Score", c("Poor", "Standard", "Good"))
+
+train_final <- encode_numerical(train_final, "Credit_Mix", c("Bad", "Standard", "Good"))
+
+unique_occupation <- unique(train_final$Occupation)
+train_final <- encode_numerical(train_final, "Occupation", unique_occupation)
+
+```
+
+##Yes No NM issues
+
+```{r}
+YNN <- function(data){
+  data$Payment_of_Min_Amount <- as.character(data$Payment_of_Min_Amount)
+data <- data %>%
+  mutate(Encoded_Payment = case_when(
+    Payment_of_Min_Amount == "Yes" ~ 1,
+    Payment_of_Min_Amount == "No" ~ 0,
+    Payment_of_Min_Amount == "NM" ~ 2,
+    TRUE ~ NA_integer_ 
+  ))
+  data$Payment_of_Min_Amount <- NULL  
+  return(data)
+}
+train_final <- YNN(train_final)
+```
+
+## Align the column formats of test set with train set
+
+```{r}
+align_dataframes <- function(a, b) {
+  # Find columns in 'a' that are not in 'b'
+  missing_columns <- setdiff(names(a), names(b))
+
+  # Add missing columns to 'b' with default value 0
+  for(column in missing_columns) {
+    b[[column]] <- 0
+  }
+
+  # Reorder columns in 'b' to match the order in 'a'
+  b <- b[names(a)]
+
+  return(b)
+}
+
+# Example usage
+# Assuming 'dataframe_a' and 'dataframe_b' are your dataframes
+#aligned_dataframe <- align_dataframes(dataframe_a, dataframe_b)
+
+
+
+
+
+```
+
+## Load test set
+
+```{r}
+
+test_set <- read_csv("test_set.csv", 
+    col_types = cols(Month = col_skip(), 
+        Name = col_skip(), SSN = col_skip()))
+
+
+test_final <- loan_type_process(test_set)
+test_final <- payment_preprocess(test_final)
+#test_final <- encode_numerical(test_final, "Credit_Score", c("Poor", "Standard", "Good")) we don't have this for test set just a reminder
+
+test_final <- encode_numerical(test_final, "Credit_Mix", c("Bad", "Standard", "Good"))
+
+#unique_occupation <- unique(train_final$Occupation)
+# just to notify you that the unique_occupation is based on the train set
+test_final <- encode_numerical(test_final, "Occupation", unique_occupation)
+test_final <- YNN(test_final)
+
+
+```
+
+## Align and clean
+
+```{r}
+# Assume df is your dataframe
+# Names of all the columns excluding the one you want to move to the end
+column_names <- setdiff(names(train_final), "Credit_Score")
+
+# Combine the column names with the column you want to move to the end
+train_final <- train_final[, c(column_names, "Credit_Score")]
+
+test_final <- align_dataframes(train_final, test_final)
+test_final$Credit_Score <- NULL  
+```
+
+```{r}
+write.csv(test_final,"test_1_DEC.csv", row.names = FALSE)
+write.csv(train_final,"train_1_DEC.csv", row.names = FALSE)
+```
+
+# Secondly, we set up the FOCI test
+
+```{r}
+library(FOCI)
+y <- train_final$Credit_Score_Encoded
+numeric_var_list <- c("Annual_Income", "Monthly_Inhand_Salary", "Num_Bank_Accounts", "Num_Credit_Card", "Interest_Rate", "Num_of_Loan", "Delay_from_due_date", "Num_of_Delayed_Payment", "Changed_Credit_Limit", "Num_Credit_Inquiries", "Outstanding_Debt", "Credit_Utilization_Ratio", "Credit_History_Age", "Total_EMI_per_month", "Amount_invested_monthly")
+
+numeric_var <- train_final[numeric_var_list]
+
+
+sample_size <- 10000
+
+random_rows <- sample(nrow(train_final), sample_size)
+
+sampled_y <- y[random_rows]
+sampled_numeric_var <- numeric_var[random_rows,]
+
+foci_result <- foci(sampled_y, sampled_numeric_var, stop= FALSE)
+
+print(foci_result)
+```
+
+```{r}
+selected_features <- foci_result$selectedVar$names
+print(selected_features)
+
+```
